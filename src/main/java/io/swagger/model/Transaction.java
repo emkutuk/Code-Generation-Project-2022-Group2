@@ -81,7 +81,8 @@ public abstract class Transaction {
 
   public void setTransactionDate(LocalDateTime date)
   {
-    if(date == null || date.isBefore(LocalDateTime.now())){
+    //if(date == null || date.isBefore(LocalDateTime.now())){
+    if(date == null){
       throw new IllegalArgumentException("Invalid date");
     }
     this.transactionDate = date;

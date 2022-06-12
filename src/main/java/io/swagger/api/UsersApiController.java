@@ -174,8 +174,9 @@ public class UsersApiController implements UsersApi
                 //If its an employee then update the user
             } else
             {
-                user.setId(userID);
+                //user.setId(userID);
                 userService.updateUser(user);
+                return new ResponseEntity<User>(user, HttpStatus.OK);
             }
         }
         return new ResponseEntity<User>(HttpStatus.NOT_FOUND).status(404).body(null);

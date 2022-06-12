@@ -21,7 +21,7 @@ public class LargeRequestFilter implements Filter {
 
         int size = servletRequest.getContentLength();
         log.info("Request size: " + size);
-        if (size > 512) {
+        if (size > 2048) {
             log.severe(String.format("Request with size %d was too large to handle", size));
             throw new ServletException(String.format("Request of size %d bytes was rejected", size));
         } else {
