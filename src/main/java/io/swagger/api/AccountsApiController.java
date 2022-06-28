@@ -2,6 +2,7 @@ package io.swagger.api;
 
 import io.swagger.model.Account;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.swagger.model.AccountDto;
 import io.swagger.model.User;
 import io.swagger.security.JwtTokenProvider;
 import io.swagger.security.Role;
@@ -53,119 +54,101 @@ public class AccountsApiController implements AccountsApi
     public ResponseEntity<Account> addANewAccount(@Parameter(in = ParameterIn.DEFAULT, description = "", required = true, schema = @Schema()) @Valid @RequestBody Account account) throws Exception
     {
         Account addedAcc = accountService.addANewAccount(account);
-        if (addedAcc == null) return new ResponseEntity<Account>(HttpStatus.BAD_REQUEST);
-        else return new ResponseEntity<Account>(HttpStatus.CREATED).status(201).body(addedAcc);
-
+        return new ResponseEntity<Account>(HttpStatus.CREATED).status(201).body(addedAcc);
     }
 
     @PreAuthorize("hasRole('EMPLOYEE')")
     public ResponseEntity<Account> changeAccountType(@Size(max = 34) @Parameter(in = ParameterIn.PATH, description = "The account to perform the action on.", required = true, schema = @Schema()) @PathVariable("iban") String iban, @Parameter(in = ParameterIn.PATH, description = "The new type for the account to be changed into.", required = true, schema = @Schema(allowableValues = {"saving", "current"})) @PathVariable("type") String type) throws Exception
     {
+        if (!accountService.ibanExists(iban)) return new ResponseEntity<Account>(HttpStatus.NOT_FOUND);
+        if (accountService.isBanksAccount(iban)) return new ResponseEntity<Account>(HttpStatus.UNAUTHORIZED);
+
         Account updatedAcc = accountService.changeAccountType(iban, type);
-        if (updatedAcc == null) return new ResponseEntity<Account>(HttpStatus.NOT_FOUND).status(404).body(null);
-        else return new ResponseEntity<Account>(HttpStatus.OK).status(200).body(updatedAcc);
+        return new ResponseEntity<Account>(HttpStatus.OK).status(200).body(updatedAcc);
     }
 
     @PreAuthorize("hasRole('EMPLOYEE') OR hasRole('CUSTOMER')")
     public ResponseEntity<Void> changeAccountStatus(@Size(max = 34) @Parameter(in = ParameterIn.PATH, description = "The account to perform the action on.", required = true, schema = @Schema()) @PathVariable("iban") String iban, @Parameter(in = ParameterIn.PATH, description = "Account status to be changed to.", required = true, schema = @Schema(allowableValues = {"active", "closed"})) @PathVariable("status") String status) throws Exception
     {
-        String token = tokenProvider.resolveToken(request);
-        String email = tokenProvider.getUsername(token);
+        if (!accountService.ibanExists(iban)) return new ResponseEntity<Void>(HttpStatus.NOT_FOUND);
+        if (accountService.isBanksAccount(iban)) return new ResponseEntity<Void>(HttpStatus.UNAUTHORIZED);
 
-        User user = userService.getUserByEmail(email);
+        User user = userService.getUserFromRequest(request);
         Role role = user.getRole();
 
-        int result = 1;
         //If the user is a customer, check if that iban belongs to him/her
-        if (role == Role.ROLE_CUSTOMER)
+        if (role.equals(Role.ROLE_CUSTOMER))
         {
-            for (Account a : user.getAccounts())
+            if (accountService.accountBelongsToUser(user, iban))
             {
-                if (user == userService.getUserByIban(a))
-                {
-                    result = accountService.changeAccountStatus(iban, status);
-                }
-            }
+                accountService.changeAccountStatus(iban, status);
+            } else
+                //If the account is not his/hers return unauthorized
+                return new ResponseEntity<Void>(HttpStatus.UNAUTHORIZED);
         }
         //If the user is employee then chage the account's status
-        else if (role == Role.ROLE_EMPLOYEE)
+        else
         {
-            result = accountService.changeAccountStatus(iban, status);
+            accountService.changeAccountStatus(iban, status);
         }
-        // 0 Success
-        // 1 Account not found
-        // 2 Account is banks own account
-        if (result == 0) return new ResponseEntity<Void>(HttpStatus.OK);
-        else if (result == 1) return new ResponseEntity<Void>(HttpStatus.NOT_FOUND);
-        else if (result == 2) return new ResponseEntity<Void>(HttpStatus.UNAUTHORIZED);
-        else return new ResponseEntity<Void>(HttpStatus.BAD_REQUEST);
+        return new ResponseEntity<Void>(HttpStatus.OK);
     }
 
     @PreAuthorize("hasRole('EMPLOYEE') OR hasRole('CUSTOMER')")
     public ResponseEntity<Double> getAccountBalanceByIban(@Size(max = 34) @Parameter(in = ParameterIn.PATH, description = "The account to perform the action on.", required = true, schema = @Schema()) @PathVariable("iban") String iban) throws Exception
     {
-        String token = tokenProvider.resolveToken(request);
-        String email = tokenProvider.getUsername(token);
+        if (!accountService.ibanExists(iban)) return new ResponseEntity<Double>(HttpStatus.NOT_FOUND);
+        if (accountService.isBanksAccount(iban)) return new ResponseEntity<Double>(HttpStatus.UNAUTHORIZED);
 
-        User user = userService.getUserByEmail(email);
+        User user = userService.getUserFromRequest(request);
         Role role = user.getRole();
 
         Double balance = null;
         //If the user is a customer, check if that iban belongs to him/her
-        if (role == Role.ROLE_CUSTOMER)
+        if (role.equals(Role.ROLE_CUSTOMER))
         {
-            for (Account a : user.getAccounts())
+            if (accountService.accountBelongsToUser(user, iban))
             {
-                if (user == userService.getUserByIban(a)) ;
-                {
-                    balance = accountService.getAccountBalanceByIban(iban);
-                    if (balance.equals(null)) return new ResponseEntity<Double>(HttpStatus.NOT_FOUND);
-                    else return new ResponseEntity<Double>(HttpStatus.OK).status(200).body(balance);
-                }
-            }
-            //If the account is not his/hers return unauthorized
-            return new ResponseEntity<Double>(HttpStatus.UNAUTHORIZED);
+                balance = accountService.getAccountBalanceByIban(iban);
+            } else
+                //If the account is not his/hers return unauthorized
+                return new ResponseEntity<Double>(HttpStatus.UNAUTHORIZED);
         }
-        //If the user is employee then return iban no matter what
+        //If the user is employee then return the balance no matter what
         else
         {
             balance = accountService.getAccountBalanceByIban(iban);
-            if (balance.equals(null)) return new ResponseEntity<Double>(HttpStatus.NOT_FOUND);
-            else
-            {
-                System.out.printf(String.valueOf(balance));
-                return new ResponseEntity<Double>(HttpStatus.OK).status(200).body(balance);
-            }
         }
+        return new ResponseEntity<Double>(HttpStatus.OK).status(200).body(balance);
     }
 
 
     @PreAuthorize("hasRole('EMPLOYEE') OR hasRole('CUSTOMER')")
     public ResponseEntity<Account> getAccountByIban(@Size(max = 34) @Parameter(in = ParameterIn.PATH, description = "The account to perform the action on.", required = true, schema = @Schema()) @PathVariable("iban") String iban) throws Exception
     {
-        String token = tokenProvider.resolveToken(request);
-        String email = tokenProvider.getUsername(token);
+        if (!accountService.ibanExists(iban)) return new ResponseEntity<Account>(HttpStatus.NOT_FOUND);
+        if (accountService.isBanksAccount(iban)) return new ResponseEntity<Account>(HttpStatus.UNAUTHORIZED);
 
-        User user = userService.getUserByEmail(email);
+        User user = userService.getUserFromRequest(request);
         Role role = user.getRole();
 
-        Account account = accountService.getAccountByIban(iban);
-        if (account != null)
+        //If its a customer, check if the account belongs to him/her
+        if (role.equals(Role.ROLE_CUSTOMER))
         {
-            //If its a customer, check if the account belongs to him/her
-            if (role == Role.ROLE_CUSTOMER)
+            if (accountService.accountBelongsToUser(user, iban))
             {
-                for (Account a : user.getAccounts())
-                {
-                    if (user == userService.getUserByIban(account))
-                        return new ResponseEntity<Account>(HttpStatus.OK).status(200).body(a);
-                }
+                Account account = accountService.getAccountByIban(iban);
+                return new ResponseEntity<Account>(HttpStatus.OK).status(200).body(account);
+            } else
                 //If the account is not his/hers return unauthorized
                 return new ResponseEntity<Account>(HttpStatus.UNAUTHORIZED);
-            }
-            //If its an employee, then return the account no matter what
-            else return new ResponseEntity<Account>(HttpStatus.OK).status(200).body(account);
-        } else return new ResponseEntity<Account>(HttpStatus.NOT_FOUND);
+        }
+        //If its an employee, then return the account no matter what
+        else
+        {
+            Account account = accountService.getAccountByIban(iban);
+            return new ResponseEntity<Account>(HttpStatus.OK).status(200).body(account);
+        }
     }
 
 
@@ -175,65 +158,50 @@ public class AccountsApiController implements AccountsApi
         List<Account> accountsList = new ArrayList<Account>();
         List<Account> allAccounts = new ArrayList<Account>();
 
-        String token = tokenProvider.resolveToken(request);
-        String email = tokenProvider.getUsername(token);
-
-        User user = userService.getUserByEmail(email);
+        User user = userService.getUserFromRequest(request);
         Role role = user.getRole();
 
-        try
-        {
-            if (role == Role.ROLE_EMPLOYEE) allAccounts = accountService.getAllAccounts();
-            else if (role == Role.ROLE_CUSTOMER) allAccounts = user.getAccounts();
+        if (role == Role.ROLE_EMPLOYEE) allAccounts = accountService.getAllAccounts();
+        else if (role == Role.ROLE_CUSTOMER) allAccounts = user.getAccounts();
 
-            long maxValue = max + offset;
-            //If the maxValue is bigger then existing accounts, max value is equal to account count
-            if (maxValue > allAccounts.stream().count()) maxValue = allAccounts.stream().count();
+        long maxValue = max + offset;
+        //If the maxValue is bigger then existing accounts, max value is equal to account count
+        if (maxValue > allAccounts.size()) maxValue = allAccounts.size();
 
-            for (int i = offset; i < maxValue; i++)
-                accountsList.add(allAccounts.get(i));
+        for (int i = offset; i < maxValue; i++)
+            accountsList.add(allAccounts.get(i));
 
-            return new ResponseEntity<List<Account>>(HttpStatus.OK).status(200).body(accountsList);
-        } catch (Exception e)
-        {
-            e.printStackTrace();
-            return new ResponseEntity<List<Account>>(HttpStatus.NOT_FOUND);
-        }
+        return new ResponseEntity<List<Account>>(HttpStatus.OK).status(200).body(accountsList);
     }
 
     @PreAuthorize("hasRole('EMPLOYEE') OR hasRole('CUSTOMER')")
-    public ResponseEntity<Account> updateAccountByIban(@Size(max = 34) @Parameter(in = ParameterIn.PATH, description = "The account to perform the action on.", required = true, schema = @Schema()) @PathVariable("iban") String iban, @Parameter(in = ParameterIn.DEFAULT, description = "", required = true, schema = @Schema()) @Valid @RequestBody Account account) throws Exception
+    public ResponseEntity<Account> updateAccount(@Size(max = 34) @Parameter(in = ParameterIn.DEFAULT, description = "", required = true, schema = @Schema()) @Valid @RequestBody AccountDto account) throws Exception
     {
-        String token = tokenProvider.resolveToken(request);
-        String email = tokenProvider.getUsername(token);
+        String iban = account.getIban();
+        if (!accountService.ibanExists(iban)) return new ResponseEntity<Account>(HttpStatus.NOT_FOUND);
+        if (accountService.isBanksAccount(iban)) return new ResponseEntity<Account>(HttpStatus.UNAUTHORIZED);
 
-        User user = userService.getUserByEmail(email);
+        User user = userService.getUserFromRequest(request);
         Role role = user.getRole();
 
-        if (user != null)
+        //If its a customer, check if the account belongs to him/her
+        if (role.equals(Role.ROLE_CUSTOMER))
         {
-            //If its a customer, check if the account belongs to him/her
-            if (role == Role.ROLE_CUSTOMER)
+            if (accountService.accountBelongsToUser(user, iban))
             {
-                for (Account a : user.getAccounts())
-                {
-                    if (user == userService.getUserByIban(a))
-                    {
-                        return new ResponseEntity<Account>(HttpStatus.OK).status(200).body(accountService.updateAccountByIban(iban, account));
-                    }
-                }
+                Account acc = accountService.updateAccount(account);
+                return new ResponseEntity<Account>(HttpStatus.OK).status(200).body(acc);
+            } else
                 //If the account is not his/hers return unauthorized
                 return new ResponseEntity<Account>(HttpStatus.UNAUTHORIZED);
-            }
-            //If its an employee, then update the account no matter what
-            else if (role == Role.ROLE_EMPLOYEE)
-            {
-                accountService.updateAccountByIban(iban, account);
-                return new ResponseEntity<Account>(HttpStatus.OK);
-            }
-            //If its not both then return bad request
-            else return new ResponseEntity<Account>(HttpStatus.BAD_REQUEST);
-        } else return new ResponseEntity<Account>(HttpStatus.NOT_FOUND);
+        }
+        //If its an employee, then update the account no matter what
+        else
+        {
+            Account acc = accountService.updateAccount(account);
+            return new ResponseEntity<Account>(HttpStatus.OK).status(200).body(acc);
+        }
     }
-
 }
+
+

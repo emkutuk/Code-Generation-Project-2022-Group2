@@ -1,31 +1,38 @@
 package io.swagger.service;
 
-import io.swagger.model.Account;
-import io.swagger.model.AccountStatus;
-import io.swagger.model.AccountType;
+import io.swagger.model.*;
 import io.swagger.repo.AccountRepo;
+import io.swagger.repo.UserRepo;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 import static java.lang.Integer.parseInt;
 
 @Service
 public class AccountService
 {
-    @Autowired
-    private AccountRepo accountRepo;
+
+    private final AccountRepo accountRepo;
+    private final UserService userService;
+    private final IbanGeneratorService ibanGeneratorService;
+
+    public AccountService(AccountRepo accountRepo, UserService userService, IbanGeneratorService ibanGeneratorService)
+    {
+        this.accountRepo = accountRepo;
+        this.userService = userService;
+        this.ibanGeneratorService = ibanGeneratorService;
+    }
+
 
     public Account addANewAccount(Account account) throws Exception
     {
         try
         {
-            if (account.getIban().equals("") || account.getIban() == null)
-            {
-                account.setIban(generateIban());
-            }
+            if (Objects.isNull(account.getIban())) account.setIban(ibanGeneratorService.generateIban());
             accountRepo.save(account);
             return account;
         } catch (Exception e)
@@ -38,7 +45,7 @@ public class AccountService
     {
         try
         {
-            return (List<Account>) accountRepo.findAll();
+            return accountRepo.findAll();
 
         } catch (Exception e)
         {
@@ -46,88 +53,78 @@ public class AccountService
         }
     }
 
+    //iban control is here due to this method called by Transaction Service
     public Account getAccountByIban(String iban)
     {
-        Account account = accountRepo.findByIban(iban);
-        if (account != null) return account;
-            //If there are no accounts, it returns null
-        else return null;
+        if (ibanExists(iban))
+        {
+            Account account = accountRepo.findByIban(iban);
+            return account;
+        } else return null;
     }
 
-    // 0 Success
-    // 1 Account not found
-    // 2 Unauthorized operation
-    public int changeAccountStatus(String iban, String status) throws Exception
+    //Check iban
+    public void changeAccountStatus(String iban, String status) throws Exception
     {
-        Account account = getAccountByIban(iban);
-        if (account == null) return 1;
-        else if (isBankAccount(account)) return 2;
-        else
+        try
         {
-            try
-            {
-                account.setAccountStatus(AccountStatus.valueOf(status.toUpperCase(Locale.ROOT)));
-                return 0;
-            } catch (Exception e)
-            {
-                throw new Exception(e.getMessage());
-            }
+            Account account = getAccountByIban(iban);
+            AccountStatus newStatus = AccountStatus.valueOf(status.toUpperCase(Locale.ROOT));
+            account.setAccountStatus(newStatus);
+        } catch (Exception e)
+        {
+            throw new Exception(e.getMessage());
         }
     }
 
-    public Account updateAccountByIban(String iban, Account account) throws Exception
+    public Account updateAccount(AccountDto account) throws Exception
     {
-        Account acc = accountRepo.findByIban(iban);
-        if (acc == null)
+        try
         {
-            throw new Exception("The account doesn't exist!");
-
-        } else if (isBankAccount(acc))
+            Account acc = applyAccChanges(account);
+            accountRepo.save(acc);
+            return acc;
+        } catch (Exception e)
         {
-            throw new Exception("This account can not be updated!");
-        } else
-        {
-            try
-            {
-                acc.setAccountStatus(account.getAccountStatus());
-                acc.setAccountType(account.getAccountType());
-                acc.setAbsoluteLimit(account.getAbsoluteLimit());
-
-                accountRepo.save(acc);
-                return acc;
-            } catch (Exception e)
-            {
-                throw new Exception(e.getMessage());
-            }
+            throw new Exception(e.getMessage());
         }
     }
 
+    private Account applyAccChanges(AccountDto modifiedAccount)
+    {
+        Account accFromDb = getAccountByIban(modifiedAccount.getIban());
+        accFromDb.setAccountStatus(modifiedAccount.getAccountStatus());
+        accFromDb.setAccountType(modifiedAccount.getAccountType());
+        accFromDb.setAbsoluteLimit(modifiedAccount.getAbsoluteLimit());
+        return accFromDb;
+    }
+
+    //Check iban
     public Account changeAccountType(String iban, String typeEnum) throws Exception
     {
         Account acc = accountRepo.findByIban(iban);
-        if (!isBankAccount(acc))
+        try
         {
-            try
-            {
-                acc.setAccountType(AccountType.valueOf(typeEnum.toUpperCase(Locale.ROOT)));
-                accountRepo.save(acc);
-                return acc;
-            } catch (Exception e)
-            {
-                throw new Exception(e.getMessage());
-            }
-        } else throw new Exception("This account type can not be changed!");
+            AccountType newType = AccountType.valueOf(typeEnum.toUpperCase(Locale.ROOT));
+            acc.setAccountType(newType);
+            accountRepo.save(acc);
+            return acc;
+        } catch (Exception e)
+        {
+            throw new Exception(e.getMessage());
+        }
     }
 
+    //Check iban
     public Double getAccountBalanceByIban(String iban) throws Exception
     {
-        Account acc = accountRepo.findByIban(iban);
-        if (acc == null)
+        try
         {
-            throw new Exception("Account does not exist.");
-        } else
+            Account account = accountRepo.findByIban(iban);
+            return account.getBalance();
+        } catch (Exception e)
         {
-            return acc.getBalance();
+            throw new Exception(e.getMessage());
         }
     }
 
@@ -135,82 +132,103 @@ public class AccountService
     {
         try
         {
-            Account account = getAccountByIban(iban);
-            double balance = account.getBalance();
-
-            //Checks if amount is valid
-            if (amount > 0)
+            if (ibanExists(iban) && amountIsValid(amount))
             {
-                account.setBalance(balance + amount);
+                performAdding(iban, amount);
                 return true;
-            } else
-            {
-                throw new Exception("Amount needs to be more than 0.");
-            }
+            } else return false;
         } catch (Exception e)
         {
-            throw new Exception(e.getMessage());
+            return false;
         }
+    }
+
+    private void performAdding(String iban, double amount)
+    {
+        Account account = getAccountByIban(iban);
+        double balance = account.getBalance();
+        account.setBalance(balance + amount);
     }
 
     public boolean subtractBalance(String iban, double amount) throws Exception
     {
         try
         {
-            Account account = getAccountByIban(iban);
-            double balance = account.getBalance();
-
-            //Checks if amount is valid
-            if (amount > 0)
+            if (ibanExists(iban) && accountIsEligibleForSubtraction(iban, amount))
             {
-                //Checks if balance is sufficient
-                if (balance >= amount)
-                {
-                    //Checks whether absolute limit is reached after the transaction
-                    if ((balance - amount) <= account.getAbsoluteLimit())
-                    {
-                        account.setBalance(balance - amount);
-                        return true;
-                    } else throw new Exception("Absolute limit has been reached.");
-                } else throw new Exception("Balance needs to be more than the amount.");
-            } else throw new Exception("Amount needs to be more than 0.");
+                performSubtraction(iban, amount);
+                return true;
+            } else return false;
         } catch (Exception e)
         {
-            throw new Exception(e.getMessage());
+            return false;
         }
     }
 
-    private String generateIban()
+    private void performSubtraction(String iban, double amount)
     {
-        //Format : NLxxINHO0xxxxxxxxx
-        // 2 digits - 9 digits
-
-        //Check what is the last iban in db
-        List<Account> allAccounts = (List<Account>) accountRepo.findAll();
-        String lastIban = allAccounts.get((int) allAccounts.stream().count() - 1).getIban();
-
-        //First check the last 9 digits to see if they are not all 9
-        String last9Digits = lastIban.substring(lastIban.length() - 9);
-        String first2Digits = lastIban.substring(2, 4);
-
-        if (last9Digits != "999999999")
-        {
-            last9Digits = String.format("%09d", (parseInt(last9Digits) + 1));
-        }
-        //If they are all 9es then first 2 digits needs to increase
-        else
-        {
-            last9Digits = String.format("%09d", 0);
-            first2Digits = String.format("%02d", (parseInt(first2Digits) + 1));
-        }
-
-        //Combine all iban together and return the value
-        return "NL" + first2Digits + "INHO0" + last9Digits;
+        Account account = getAccountByIban(iban);
+        double balance = account.getBalance();
+        account.setBalance(balance - amount);
     }
 
-    private boolean isBankAccount(Account account)
+    private boolean accountIsEligibleForSubtraction(String iban, double amount)
     {
-        if (account.getIban() == "NL01INHO0000000001") return true;
-        else return false;
+        //I get balance here so that, i dont have to get the same balance for 2 different methods below, thus less calls to db
+        double balance = getBalanceByIban(iban);
+
+        return amountIsValid(amount) && hasEnoughAbsoluteLimit(iban, amount, balance) && hasEnoughBalance(balance, amount);
+    }
+
+
+    private boolean hasEnoughAbsoluteLimit(String iban, double amount, double balance)
+    {
+        double absoluteLimit = getAbsoluteLimitByIban(iban);
+        return (balance - amount) <= absoluteLimit;
+    }
+
+    private double getAbsoluteLimitByIban(String iban)
+    {
+        Account account = getAccountByIban(iban);
+        return account.getAbsoluteLimit();
+    }
+
+    private boolean hasEnoughBalance(double balance, double amount)
+    {
+        return balance >= amount;
+    }
+
+    private boolean amountIsValid(double amount)
+    {
+        return amount > 0;
+    }
+
+
+    private double getBalanceByIban(String iban)
+    {
+        Account account = getAccountByIban(iban);
+        return account.getBalance();
+    }
+
+    public boolean isBanksAccount(String iban)
+    {
+        return iban.equals(IbanGeneratorService.BANKSIBAN);
+    }
+
+    public boolean ibanExists(String iban)
+    {
+        return !Objects.isNull(accountRepo.findByIban(iban));
+    }
+
+    public boolean accountBelongsToUser(User user, String iban) throws Exception
+    {
+        for (Account a : user.getAccounts())
+        {
+            if (a.getIban().equals(iban))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 }

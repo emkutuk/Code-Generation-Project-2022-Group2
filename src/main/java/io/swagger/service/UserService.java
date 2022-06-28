@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import javax.persistence.Transient;
+import javax.servlet.http.HttpServletRequest;
 import java.math.BigInteger;
 import java.util.List;
 import java.util.UUID;
@@ -177,5 +178,12 @@ public class UserService
         {
             throw new Exception(e.getMessage());
         }
+    }
+
+    public User getUserFromRequest(HttpServletRequest request) throws Exception
+    {
+        String token = jwtTokenProvider.resolveToken(request);
+        String email = jwtTokenProvider.getUsername(token);
+        return getUserByEmail(email);
     }
 }

@@ -6,6 +6,7 @@
 package io.swagger.api;
 
 import io.swagger.model.Account;
+import io.swagger.model.AccountDto;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -66,8 +67,8 @@ public interface AccountsApi
 
     @Operation(summary = "Updates an existing account", description = "", security = {@SecurityRequirement(name = "bearerAuth")}, tags = {"Account"})
     @ApiResponses(value = {@ApiResponse(responseCode = "200", description = "An account object has been updated.")})
-    @RequestMapping(value = "/Accounts/{iban}", consumes = {"application/json"}, method = RequestMethod.PUT)
-    ResponseEntity<Account> updateAccountByIban(@Size(max = 34) @Parameter(in = ParameterIn.PATH, description = "The account to perform the action on.", required = true, schema = @Schema()) @PathVariable("iban") String iban, @Parameter(in = ParameterIn.DEFAULT, description = "", required = true, schema = @Schema()) @Valid @RequestBody Account body) throws Exception;
+    @RequestMapping(value = "/Accounts", consumes = {"application/json"}, method = RequestMethod.PUT)
+    ResponseEntity<Account> updateAccount(@Parameter(in = ParameterIn.DEFAULT, description = "", required = true, schema = @Schema()) @Valid @RequestBody AccountDto body) throws Exception;
 
 }
 
